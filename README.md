@@ -46,7 +46,7 @@ bun run build
 
 ## Data Files
 
-The binary embedding files are served from Cloudflare R2 CDN and not included in this repo (~929MB total). The production build fetches them from:
+The binary embedding files are served from Cloudflare R2 CDN and not included in this repo (~173MB total). The production build fetches them from:
 
 - `https://arxiv.bshk.app/data_minilm_384d/` (default, 47MB)
 - `https://arxiv.bshk.app/data_nomic_512d/` (63MB)
