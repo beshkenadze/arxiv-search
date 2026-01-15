@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU Index Builder</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem;
+      background: #1a1a2e;
+      color: #eee;
+    }
+    h1 { color: #00d4ff; }
+    .card {
+      background: #16213e;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin: 1rem 0;
+    }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+    .stat { text-align: center; }
+    .stat-value { font-size: 2rem; color: #00d4ff; }
+    .stat-label { color: #888; font-size: 0.9rem; }
+    button {
+      background: #00d4ff;
+      color: #000;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 4px;
+      font-size: 1rem;
+      cursor: pointer;
+      margin-right: 0.5rem;
+    }
+    button:disabled { background: #444; color: #888; cursor: not-allowed; }
+    button.danger { background: #ff4757; color: #fff; }
+    .progress-bar {
+      height: 24px;
+      background: #0f3460;
+      border-radius: 4px;
+      overflow: hidden;
+      margin: 1rem 0;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #00d4ff, #0984e3);
+      transition: width 0.3s;
+    }
+    .log {
+      background: #0a0a14;
+      border-radius: 4px;
+      padding: 1rem;
+      height: 200px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.85rem;
+    }
+    .log-entry { margin: 0.25rem 0; }
+    .log-entry.error { color: #ff4757; }
+    .log-entry.success { color: #2ed573; }
+    .log-entry.info { color: #00d4ff; }
+    #device-info { color: #2ed573; margin-left: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>WebGPU Index Builder <span id="device-info"></span></h1>
+  <p>Regenerate binary embeddings using transformers.js WebGPU for compatible search.</p>
+
+  <div class="card">
+    <h3>Configuration</h3>
+    <p><strong>Model:</strong> mixedbread-ai/mxbai-embed-2d-large-v1 (q8)</p>
+    <p><strong>Dimension:</strong> <span id="dimension">512</span> (Matryoshka truncation)</p>
+    <p><strong>Batch Size:</strong> <input type="number" id="batch-size" value="32" min="1" max="128" style="width:60px"> papers per batch</p>
+  </div>
+
+  <div class="card stats">
+    <div class="stat">
+      <div class="stat-value" id="total-papers">-</div>
+      <div class="stat-label">Total Papers</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value" id="processed">0</div>
+      <div class="stat-label">Processed</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value" id="eta">-</div>
+      <div class="stat-label">ETA</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="progress-bar">
+      <div class="progress-fill" id="progress" style="width: 0%"></div>
+    </div>
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+      <button id="btn-start">Start Building</button>
+      <button id="btn-pause" disabled>Pause</button>
+      <button id="btn-download" disabled>Download Index</button>
+      <button id="btn-reset" class="danger">Reset Progress</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Log</h3>
+    <div class="log" id="log"></div>
+  </div>
+
+  <script type="module">
+    import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1'
+
+    env.allowLocalModels = false
+    env.useBrowserCache = true
+
+    const DIMENSION = 512
+    const DB_NAME = 'webgpu-index-builder'
+    const DB_VERSION = 1
+    const STORE_NAME = 'embeddings'
+
+    let db = null
+    let metadata = null
+    let embedder = null
+    let isRunning = false
+    let processedCount = 0
+    let startTime = null
+
+    const $ = (id) => document.getElementById(id)
+
+    function log(msg, type = '') {
+      const entry = document.createElement('div')
+      entry.className = `log-entry ${type}`
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`
+      $('log').appendChild(entry)
+      $('log').scrollTop = $('log').scrollHeight
+    }
+
+    async function openDB() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION)
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => resolve(request.result)
+        request.onupgradeneeded = (e) => {
+          const db = e.target.result
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME, { keyPath: 'idx' })
+          }
+        }
+      })
+    }
+
+    async function getProcessedCount() {
+      return new Promise((resolve) => {
+        const tx = db.transaction(STORE_NAME, 'readonly')
+        const store = tx.objectStore(STORE_NAME)
+        const request = store.count()
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => resolve(0)
+      })
+    }
+
+    async function saveEmbedding(idx, binary) {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite')
+        const store = tx.objectStore(STORE_NAME)
+        store.put({ idx, binary })
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    }
+
+    async function getAllEmbeddings() {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly')
+        const store = tx.objectStore(STORE_NAME)
+        const request = store.getAll()
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+    }
+
+    async function clearDB() {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite')
+        const store = tx.objectStore(STORE_NAME)
+        const request = store.clear()
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+      })
+    }
+
+    function toUBinary(embedding) {
+      const bytes = Math.ceil(DIMENSION / 8)
+      const binary = new Uint8Array(bytes)
+      for (let i = 0; i < DIMENSION; i++) {
+        if (embedding[i] > 0) {
+          binary[Math.floor(i / 8)] |= 1 << (7 - (i % 8))
+        }
+      }
+      return binary
+    }
+
+    function updateUI() {
+      const total = metadata?.length || 0
+      $('total-papers').textContent = total.toLocaleString()
+      $('processed').textContent = processedCount.toLocaleString()
+
+      const pct = total > 0 ? (processedCount / total) * 100 : 0
+      $('progress').style.width = `${pct}%`
+
+      if (startTime && processedCount > 0) {
+        const elapsed = (Date.now() - startTime) / 1000
+        const rate = processedCount / elapsed
+        const remaining = (total - processedCount) / rate
+        const hours = Math.floor(remaining / 3600)
+        const mins = Math.floor((remaining % 3600) / 60)
+        $('eta').textContent = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`
+      }
+
+      $('btn-download').disabled = processedCount < (metadata?.length || Infinity)
+    }
+
+    async function initEmbedder() {
+      log('Checking WebGPU support...', 'info')
+
+      const gpu = navigator.gpu
+      if (!gpu) {
+        log('WebGPU not supported in this browser!', 'error')
+        return false
+      }
+
+      const adapter = await gpu.requestAdapter()
+      if (!adapter) {
+        log('No WebGPU adapter found!', 'error')
+        return false
+      }
+
+      $('device-info').textContent = '(WebGPU)'
+      log('WebGPU available, loading model...', 'info')
+
+      embedder = await pipeline('feature-extraction', 'mixedbread-ai/mxbai-embed-2d-large-v1', {
+        dtype: 'q8',
+        device: 'webgpu',
+        progress_callback: (p) => {
+          if (p.status === 'progress' && p.file) {
+            log(`Loading ${p.file}: ${Math.round(p.progress)}%`)
+          }
+        }
+      })
+
+      log('Model loaded with WebGPU!', 'success')
+      return true
+    }
+
+    async function processNextBatch() {
+      if (!isRunning || !embedder || !metadata) return
+
+      const batchSize = parseInt($('batch-size').value) || 32
+      const startIdx = processedCount
+      const endIdx = Math.min(startIdx + batchSize, metadata.length)
+
+      if (startIdx >= metadata.length) {
+        isRunning = false
+        log('All papers processed!', 'success')
+        $('btn-start').disabled = false
+        $('btn-pause').disabled = true
+        updateUI()
+        return
+      }
+
+      const batch = metadata.slice(startIdx, endIdx)
+      const titles = batch.map(p => `Represent this sentence for searching relevant passages: ${p.title}`)
+
+      try {
+        const embeddings = await embedder(titles, { pooling: 'cls', normalize: true })
+
+        for (let i = 0; i < batch.length; i++) {
+          const idx = startIdx + i
+          const emb = Array.from(embeddings[i].data).slice(0, DIMENSION)
+          const binary = toUBinary(emb)
+          await saveEmbedding(idx, binary)
+        }
+
+        processedCount = endIdx
+
+        if (processedCount % 1000 < batchSize) {
+          log(`Processed ${processedCount.toLocaleString()} / ${metadata.length.toLocaleString()}`, 'info')
+        }
+
+        updateUI()
+
+        setTimeout(processNextBatch, 0)
+      } catch (err) {
+        log(`Error at batch ${startIdx}: ${err.message}`, 'error')
+        isRunning = false
+        $('btn-start').disabled = false
+        $('btn-pause').disabled = true
+      }
+    }
+
+    async function downloadIndex() {
+      log('Preparing download...', 'info')
+
+      const all = await getAllEmbeddings()
+      all.sort((a, b) => a.idx - b.idx)
+
+      const bytesPerPaper = DIMENSION / 8
+      const buffer = new Uint8Array(metadata.length * bytesPerPaper)
+
+      for (const item of all) {
+        buffer.set(item.binary, item.idx * bytesPerPaper)
+      }
+
+      const blob = new Blob([buffer], { type: 'application/octet-stream' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'binary_embeddings_webgpu.bin'
+      a.click()
+      URL.revokeObjectURL(url)
+
+      log(`Downloaded ${(buffer.length / 1e6).toFixed(1)} MB`, 'success')
+    }
+
+    async function init() {
+      log('Opening IndexedDB...', 'info')
+      db = await openDB()
+
+      log('Loading metadata...', 'info')
+      const resp = await fetch('/data_512d/metadata.json')
+      metadata = await resp.json()
+      log(`Loaded ${metadata.length.toLocaleString()} papers`, 'success')
+
+      processedCount = await getProcessedCount()
+      if (processedCount > 0) {
+        log(`Resuming from ${processedCount.toLocaleString()} processed`, 'info')
+      }
+
+      updateUI()
+    }
+
+    $('btn-start').onclick = async () => {
+      if (!embedder) {
+        $('btn-start').disabled = true
+        const ok = await initEmbedder()
+        if (!ok) {
+          $('btn-start').disabled = false
+          return
+        }
+      }
+
+      isRunning = true
+      startTime = Date.now() - (processedCount * 50)
+      $('btn-start').disabled = true
+      $('btn-pause').disabled = false
+
+      log('Starting index build...', 'info')
+      processNextBatch()
+    }
+
+    $('btn-pause').onclick = () => {
+      isRunning = false
+      $('btn-start').disabled = false
+      $('btn-pause').disabled = true
+      log('Paused', 'info')
+    }
+
+    $('btn-download').onclick = downloadIndex
+
+    $('btn-reset').onclick = async () => {
+      if (!confirm('Reset all progress? This cannot be undone.')) return
+      await clearDB()
+      processedCount = 0
+      updateUI()
+      log('Progress reset', 'info')
+    }
+
+    init().catch(err => log(`Init error: ${err.message}`, 'error'))
+  </script>
+</body>
+</html>

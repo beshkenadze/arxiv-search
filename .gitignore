@@ -1,0 +1,36 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Data files (served from R2 CDN, too large for git)
+public/data/
+public/data_512d/
+public/data_minilm_384d/
+public/data_nomic_512d/
+
+# Wrangler
+.wrangler/
+
+# Test results
+test-results/

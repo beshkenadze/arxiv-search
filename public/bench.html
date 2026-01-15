@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Model Benchmark</title>
+  <style>
+    body { font-family: system-ui; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: #f5f5f5; }
+    .status { padding: 4px 8px; border-radius: 4px; }
+    .running { background: #fff3cd; }
+    .done { background: #d4edda; }
+    .error { background: #f8d7da; }
+    pre { background: #f5f5f5; padding: 1rem; overflow-x: auto; }
+    button { padding: 8px 16px; margin: 4px; cursor: pointer; }
+    #log { height: 200px; overflow-y: auto; background: #1e1e1e; color: #0f0; padding: 1rem; font-family: monospace; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>🔬 Edge Model Benchmark</h1>
+
+  <div>
+    <button id="runAll">Run All Benchmarks</button>
+    <button id="runEmbedders">Embedders Only</button>
+    <button id="runRerankers">Rerankers Only</button>
+  </div>
+
+  <h2>Embedder Models</h2>
+  <table id="embedderTable">
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th>Status</th>
+        <th>Load (ms)</th>
+        <th>Encode (ms)</th>
+        <th>Dims</th>
+        <th>First 5</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Reranker Models</h2>
+  <table id="rerankerTable">
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th>Status</th>
+        <th>Load (ms)</th>
+        <th>Rerank (ms)</th>
+        <th>Scores</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Log</h2>
+  <div id="log"></div>
+
+  <script type="module">
+    const EMBEDDERS = [
+      { id: 'mxbai-xsmall', name: 'mixedbread-ai/mxbai-embed-xsmall-v1', pooling: 'mean' },
+      { id: 'minilm-l6', name: 'Xenova/all-MiniLM-L6-v2', pooling: 'mean' },
+      { id: 'mxbai-2d-large', name: 'mixedbread-ai/mxbai-embed-2d-large-v1', pooling: 'cls' },
+    ];
+
+    const RERANKERS = [
+      { id: 'ms-marco-l6', name: 'Xenova/ms-marco-MiniLM-L-6-v2' },
+      { id: 'ms-marco-l4', name: 'Xenova/ms-marco-MiniLM-L-4-v2' },
+      { id: 'jina-tiny', name: 'jinaai/jina-reranker-v1-tiny-en' },
+    ];
+
+    const TEST_QUERY = 'binary quantization for vector search';
+    const TEST_DOCS = [
+      'Binary quantization reduces embedding size by 32x while retaining 95% accuracy',
+      'The weather in Tokyo is sunny today with temperature around 25 degrees',
+      'Product Quantization is a technique for approximate nearest neighbor search',
+      'Hamming distance measures the number of differing bits between binary vectors',
+    ];
+
+    const log = (msg) => {
+      const el = document.getElementById('log');
+      const time = new Date().toISOString().slice(11, 23);
+      el.innerHTML += `[${time}] ${msg}\n`;
+      el.scrollTop = el.scrollHeight;
+      console.log(msg);
+    };
+
+    const updateRow = (tableId, modelId, data) => {
+      const row = document.querySelector(`#${tableId} tr[data-model="${modelId}"]`);
+      if (!row) return;
+      Object.entries(data).forEach(([key, value]) => {
+        const cell = row.querySelector(`[data-field="${key}"]`);
+        if (cell) cell.innerHTML = value;
+      });
+    };
+
+    const initTables = () => {
+      const embedderBody = document.querySelector('#embedderTable tbody');
+      embedderBody.innerHTML = EMBEDDERS.map(m => `
+        <tr data-model="${m.id}">
+          <td>${m.name}</td>
+          <td data-field="status"><span class="status">pending</span></td>
+          <td data-field="loadTime">-</td>
+          <td data-field="encodeTime">-</td>
+          <td data-field="dims">-</td>
+          <td data-field="first5">-</td>
+        </tr>
+      `).join('');
+
+      const rerankerBody = document.querySelector('#rerankerTable tbody');
+      rerankerBody.innerHTML = RERANKERS.map(m => `
+        <tr data-model="${m.id}">
+          <td>${m.name}</td>
+          <td data-field="status"><span class="status">pending</span></td>
+          <td data-field="loadTime">-</td>
+          <td data-field="rerankTime">-</td>
+          <td data-field="scores">-</td>
+        </tr>
+      `).join('');
+    };
+
+    const benchmarkEmbedder = async (model) => {
+      const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3');
+
+      log(`Loading embedder: ${model.name}`);
+      updateRow('embedderTable', model.id, { status: '<span class="status running">loading</span>' });
+
+      const loadStart = performance.now();
+      let extractor;
+      try {
+        extractor = await pipeline('feature-extraction', model.name, { dtype: 'q8' });
+      } catch (e) {
+        log(`ERROR loading ${model.name}: ${e.message}`);
+        updateRow('embedderTable', model.id, { status: '<span class="status error">error</span>' });
+        return { error: e.message };
+      }
+      const loadTime = Math.round(performance.now() - loadStart);
+
+      log(`Encoding query with ${model.name}`);
+      updateRow('embedderTable', model.id, { status: '<span class="status running">encoding</span>', loadTime });
+
+      const encodeStart = performance.now();
+      const result = await extractor(TEST_QUERY, { pooling: model.pooling, normalize: true });
+      const encodeTime = Math.round(performance.now() - encodeStart);
+
+      const data = Array.from(result.data);
+      const dims = data.length;
+      const first5 = data.slice(0, 5).map(v => v.toFixed(4)).join(', ');
+
+      log(`${model.name}: dims=${dims}, first5=[${first5}]`);
+      updateRow('embedderTable', model.id, {
+        status: '<span class="status done">done</span>',
+        loadTime,
+        encodeTime,
+        dims,
+        first5: `[${first5}]`
+      });
+
+      return { loadTime, encodeTime, dims, first5: data.slice(0, 5) };
+    };
+
+    const benchmarkReranker = async (model) => {
+      const { AutoTokenizer, AutoModelForSequenceClassification } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3');
+
+      log(`Loading reranker: ${model.name}`);
+      updateRow('rerankerTable', model.id, { status: '<span class="status running">loading</span>' });
+
+      const loadStart = performance.now();
+      let reranker, tokenizer;
+
+      try {
+        // Always use manual loading to get raw logits (pipeline applies softmax = always 1.0)
+        reranker = await AutoModelForSequenceClassification.from_pretrained(model.name, { dtype: 'q8' });
+        tokenizer = await AutoTokenizer.from_pretrained(model.name);
+      } catch (e) {
+        log(`ERROR loading ${model.name}: ${e.message}`);
+        updateRow('rerankerTable', model.id, { status: '<span class="status error">error</span>' });
+        return { error: e.message };
+      }
+      const loadTime = Math.round(performance.now() - loadStart);
+
+      log(`Reranking with ${model.name}`);
+      updateRow('rerankerTable', model.id, { status: '<span class="status running">reranking</span>', loadTime });
+
+      const rerankStart = performance.now();
+      let scores;
+
+      try {
+        const inputs = tokenizer(
+          new Array(TEST_DOCS.length).fill(TEST_QUERY),
+          { text_pair: TEST_DOCS, padding: true, truncation: true }
+        );
+        const { logits } = await reranker(inputs);
+        // Raw logits - higher = more relevant
+        scores = logits.tolist().map(row => Array.isArray(row) ? row[0] : row);
+      } catch (e) {
+        log(`ERROR reranking ${model.name}: ${e.message}`);
+        updateRow('rerankerTable', model.id, { status: '<span class="status error">error</span>' });
+        return { error: e.message };
+      }
+      const rerankTime = Math.round(performance.now() - rerankStart);
+
+      const scoresStr = scores.map(s => s.toFixed(4)).join(', ');
+      log(`${model.name}: scores=[${scoresStr}]`);
+      updateRow('rerankerTable', model.id, {
+        status: '<span class="status done">done</span>',
+        loadTime,
+        rerankTime,
+        scores: `[${scoresStr}]`
+      });
+
+      return { loadTime, rerankTime, scores };
+    };
+
+    const runEmbedderBenchmarks = async () => {
+      const results = {};
+      for (const model of EMBEDDERS) {
+        results[model.id] = await benchmarkEmbedder(model);
+      }
+      window.__embedderResults = results;
+      return results;
+    };
+
+    const runRerankerBenchmarks = async () => {
+      const results = {};
+      for (const model of RERANKERS) {
+        results[model.id] = await benchmarkReranker(model);
+      }
+      window.__rerankerResults = results;
+      return results;
+    };
+
+    const runAllBenchmarks = async () => {
+      log('=== Starting All Benchmarks ===');
+      await runEmbedderBenchmarks();
+      await runRerankerBenchmarks();
+      log('=== All Benchmarks Complete ===');
+      window.__benchComplete = true;
+    };
+
+    // Initialize
+    initTables();
+
+    // Event handlers
+    document.getElementById('runAll').onclick = runAllBenchmarks;
+    document.getElementById('runEmbedders').onclick = runEmbedderBenchmarks;
+    document.getElementById('runRerankers').onclick = runRerankerBenchmarks;
+
+    // Expose for Playwright
+    window.runAllBenchmarks = runAllBenchmarks;
+    window.runEmbedderBenchmarks = runEmbedderBenchmarks;
+    window.runRerankerBenchmarks = runRerankerBenchmarks;
+    window.__benchComplete = false;
+  </script>
+</body>
+</html>

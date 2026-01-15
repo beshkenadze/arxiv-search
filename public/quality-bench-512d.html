@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Search Quality Benchmark (512d)</title>
+  <style>
+    body { font-family: system-ui; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; background: #fafafa; }
+    h1 { color: #333; }
+    .card { background: white; border-radius: 8px; padding: 1.5rem; margin: 1rem 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { border: 1px solid #e0e0e0; padding: 10px; text-align: left; }
+    th { background: #f5f5f5; font-weight: 600; }
+    .metric { font-size: 2rem; font-weight: bold; color: #2196F3; }
+    .metric-label { font-size: 0.9rem; color: #666; }
+    .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin: 1rem 0; }
+    .metric-card { text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 8px; }
+    .status { padding: 4px 8px; border-radius: 4px; font-size: 0.85rem; }
+    .pending { background: #e3e3e3; }
+    .running { background: #fff3cd; }
+    .pass { background: #d4edda; color: #155724; }
+    .fail { background: #f8d7da; color: #721c24; }
+    button { padding: 10px 20px; margin: 4px; cursor: pointer; background: #2196F3; color: white; border: none; border-radius: 4px; font-size: 1rem; }
+    button:hover { background: #1976D2; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    #log { height: 150px; overflow-y: auto; background: #1e1e1e; color: #0f0; padding: 1rem; font-family: monospace; font-size: 12px; border-radius: 4px; }
+    .progress-bar { width: 100%; height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; }
+    .progress-fill { height: 100%; background: #4CAF50; transition: width 0.3s; }
+    .rank { font-weight: bold; }
+    .rank-1 { color: #4CAF50; }
+    .rank-low { color: #f44336; }
+  </style>
+</head>
+<body>
+  <h1>🎯 Search Quality Benchmark (512d)</h1>
+
+  <div class="card">
+    <h2>Controls</h2>
+    <button id="runBench" onclick="runQualityBenchmark()">Run All Sequential</button>
+    <button id="runBatch" onclick="runBatchBenchmark()">Run All Batch</button>
+    <button id="loadOnly" onclick="loadModelsOnly()">Load Models Only</button>
+    <div style="margin-top: 1rem;">
+      <label>Run specific IDs (comma-separated): </label>
+      <input type="text" id="queryIds" placeholder="q010, q011, q019" style="width: 300px; padding: 6px; font-size: 14px;">
+      <button id="runSelected" onclick="runSelectedQueries()">Run Selected</button>
+    </div>
+    <div style="margin-top: 1rem;">
+      <div class="progress-bar"><div class="progress-fill" id="progressBar" style="width: 0%"></div></div>
+      <div id="statusText" style="margin-top: 0.5rem; color: #666;">Ready</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Aggregate Metrics</h2>
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric" id="mrr">-</div>
+        <div class="metric-label">MRR (Mean Reciprocal Rank)</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric" id="recall1">-</div>
+        <div class="metric-label">Recall@1</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric" id="recall5">-</div>
+        <div class="metric-label">Recall@5</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric" id="recall10">-</div>
+        <div class="metric-label">Recall@10</div>
+      </div>
+    </div>
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric" id="avgTime">-</div>
+        <div class="metric-label">Avg Search Time (ms)</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric" id="totalQueries">-</div>
+        <div class="metric-label">Total Queries</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric" id="passRate">-</div>
+        <div class="metric-label">Pass Rate</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric" id="totalTime">-</div>
+        <div class="metric-label">Total Time (s)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Query Results</h2>
+    <table id="resultsTable">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Query</th>
+          <th>Expected</th>
+          <th>Found Rank</th>
+          <th>Time (ms)</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </div>
+
+  <script type="module">
+    // Binary quantization helpers
+    const POPCOUNT = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) {
+      POPCOUNT[i] = (i & 1) + POPCOUNT[i >> 1];
+    }
+
+    function hammingDistance(a, b) {
+      let dist = 0;
+      for (let i = 0; i < a.length; i++) {
+        dist += POPCOUNT[a[i] ^ b[i]];
+      }
+      return dist;
+    }
+
+    function toUBinary(embedding, dim) {
+      const bytes = Math.ceil(dim / 8);
+      const binary = new Uint8Array(bytes);
+      for (let i = 0; i < dim; i++) {
+        if (embedding[i] > 0) {
+          binary[Math.floor(i / 8)] |= 1 << (7 - (i % 8));
+        }
+      }
+      return binary;
+    }
+
+    // State
+    let binaryIndex = null;
+    let metadata = null;
+    let embedder = null;
+    let reranker = null;
+    let tokenizer = null;
+    let testQueries = null;
+    const DIMENSION = 512;
+    const CANDIDATES = 300;
+    const TOP_K = 10;
+
+    const log = (msg) => {
+      const el = document.getElementById('log');
+      const time = new Date().toISOString().slice(11, 23);
+      el.innerHTML += `[${time}] ${msg}\n`;
+      el.scrollTop = el.scrollHeight;
+      console.log(msg);
+    };
+
+    const setStatus = (text, progress = null) => {
+      document.getElementById('statusText').textContent = text;
+      if (progress !== null) {
+        document.getElementById('progressBar').style.width = `${progress}%`;
+      }
+    };
+
+    const loadIndex = async () => {
+      log('Loading binary index...');
+      const binResponse = await fetch('/data_512d/binary_embeddings.bin');
+      binaryIndex = new Uint8Array(await binResponse.arrayBuffer());
+
+      log('Loading metadata...');
+      const metaResponse = await fetch('/data_512d/metadata.json');
+      metadata = await metaResponse.json();
+
+      log(`Index loaded: ${metadata.length} papers`);
+    };
+
+    const loadTestQueries = async () => {
+      log('Loading test queries...');
+      const response = await fetch('/benchmark/test_queries.json');
+      const data = await response.json();
+      testQueries = data.queries;
+      log(`Loaded ${testQueries.length} test queries`);
+    };
+
+    const loadModels = async () => {
+      const { pipeline, AutoTokenizer, AutoModelForSequenceClassification } =
+        await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3');
+
+      log('Loading embedder: mxbai-embed-2d-large-v1...');
+      setStatus('Loading embedder...', 20);
+      embedder = await pipeline('feature-extraction', 'mixedbread-ai/mxbai-embed-2d-large-v1', { dtype: 'q8' });
+
+      log('Loading reranker: ms-marco-MiniLM-L-6-v2...');
+      setStatus('Loading reranker...', 50);
+      reranker = await AutoModelForSequenceClassification.from_pretrained('Xenova/ms-marco-MiniLM-L-6-v2', { dtype: 'q8' });
+      tokenizer = await AutoTokenizer.from_pretrained('Xenova/ms-marco-MiniLM-L-6-v2');
+
+      log('Models loaded');
+    };
+
+    const search = async (query) => {
+      const promptedQuery = `Represent this sentence for searching relevant passages: ${query}`;
+      const embedding = await embedder(promptedQuery, { pooling: 'cls', normalize: true });
+
+      const rawData = embedding.data;
+      const fullEmb = Array.from(rawData).slice(0, DIMENSION);
+      const binaryQuery = toUBinary(fullEmb, DIMENSION);
+
+      const bytesPerPaper = DIMENSION / 8;
+      const numPapers = metadata.length;
+      const candidateResults = [];
+
+      for (let i = 0; i < numPapers; i++) {
+        const paperBinary = binaryIndex.subarray(i * bytesPerPaper, (i + 1) * bytesPerPaper);
+        const dist = hammingDistance(binaryQuery, paperBinary);
+        candidateResults.push({ idx: i, dist });
+      }
+
+      candidateResults.sort((a, b) => a.dist - b.dist);
+      const topCandidates = candidateResults.slice(0, CANDIDATES);
+
+      const titles = topCandidates.map(c => metadata[c.idx].title);
+      const inputs = tokenizer(
+        new Array(titles.length).fill(query),
+        { text_pair: titles, padding: true, truncation: true }
+      );
+      const { logits } = await reranker(inputs);
+      const scores = logits.tolist().map(row => Array.isArray(row) ? row[0] : row);
+
+      const results = topCandidates.map((c, i) => ({
+        arxiv_id: metadata[c.idx].arxiv_id,
+        title: metadata[c.idx].title,
+        score: scores[i],
+        distance: c.dist,
+      }));
+
+      results.sort((a, b) => b.score - a.score);
+      return results.slice(0, TOP_K);
+    };
+
+    const findRank = (results, expectedPapers) => {
+      for (let i = 0; i < results.length; i++) {
+        if (expectedPapers.includes(results[i].arxiv_id)) {
+          return i + 1;
+        }
+      }
+      return null;
+    };
+
+    const runQualityBenchmark = async () => {
+      document.getElementById('runBench').disabled = true;
+      const startTime = performance.now();
+
+      try {
+        setStatus('Loading index...', 5);
+        if (!binaryIndex) await loadIndex();
+
+        setStatus('Loading test queries...', 10);
+        if (!testQueries) await loadTestQueries();
+
+        setStatus('Loading models...', 15);
+        if (!embedder) await loadModels();
+
+        setStatus('Running benchmark...', 60);
+
+        const tbody = document.querySelector('#resultsTable tbody');
+        tbody.innerHTML = testQueries.map(q => `
+          <tr data-id="${q.id}">
+            <td>${q.id}</td>
+            <td>${q.query.slice(0, 50)}${q.query.length > 50 ? '...' : ''}</td>
+            <td>${q.expected_papers.join(', ')}</td>
+            <td data-field="rank">-</td>
+            <td data-field="time">-</td>
+            <td data-field="status"><span class="status pending">pending</span></td>
+          </tr>
+        `).join('');
+
+        const queryResults = [];
+        let reciprocalRankSum = 0;
+        let recall1Count = 0;
+        let recall5Count = 0;
+        let recall10Count = 0;
+        let totalSearchTime = 0;
+
+        for (let i = 0; i < testQueries.length; i++) {
+          const q = testQueries[i];
+          const progress = 60 + (i / testQueries.length) * 35;
+          setStatus(`Query ${i + 1}/${testQueries.length}: ${q.id}`, progress);
+
+          const row = document.querySelector(`tr[data-id="${q.id}"]`);
+          row.querySelector('[data-field="status"]').innerHTML = '<span class="status running">running</span>';
+
+          const searchStart = performance.now();
+          const results = await search(q.query);
+          const searchTime = Math.round(performance.now() - searchStart);
+          totalSearchTime += searchTime;
+
+          const rank = findRank(results, q.expected_papers);
+          const passed = rank !== null && rank <= TOP_K;
+
+          if (rank !== null) {
+            reciprocalRankSum += 1 / rank;
+            if (rank <= 1) recall1Count++;
+            if (rank <= 5) recall5Count++;
+            if (rank <= 10) recall10Count++;
+          }
+
+          queryResults.push({ ...q, rank, searchTime, passed, results });
+
+          row.querySelector('[data-field="rank"]').innerHTML = rank
+            ? `<span class="rank ${rank === 1 ? 'rank-1' : rank > 5 ? 'rank-low' : ''}">#${rank}</span>`
+            : '<span class="rank rank-low">Not found</span>';
+          row.querySelector('[data-field="time"]').textContent = searchTime;
+          row.querySelector('[data-field="status"]').innerHTML = passed
+            ? '<span class="status pass">PASS</span>'
+            : '<span class="status fail">FAIL</span>';
+
+          log(`${q.id}: rank=${rank ?? 'N/A'}, time=${searchTime}ms, ${passed ? 'PASS' : 'FAIL'}`);
+          log(`  Expected: ${q.expected_papers.join(', ')}`);
+          log(`  Top 3 results: ${results.slice(0, 3).map(r => r.arxiv_id).join(', ')}`);
+        }
+
+        const totalTime = ((performance.now() - startTime) / 1000).toFixed(1);
+        const numQueries = testQueries.length;
+
+        const mrr = (reciprocalRankSum / numQueries).toFixed(3);
+        const recall1 = ((recall1Count / numQueries) * 100).toFixed(0) + '%';
+        const recall5 = ((recall5Count / numQueries) * 100).toFixed(0) + '%';
+        const recall10 = ((recall10Count / numQueries) * 100).toFixed(0) + '%';
+        const avgTime = Math.round(totalSearchTime / numQueries);
+        const passRate = ((queryResults.filter(r => r.passed).length / numQueries) * 100).toFixed(0) + '%';
+
+        document.getElementById('mrr').textContent = mrr;
+        document.getElementById('recall1').textContent = recall1;
+        document.getElementById('recall5').textContent = recall5;
+        document.getElementById('recall10').textContent = recall10;
+        document.getElementById('avgTime').textContent = avgTime;
+        document.getElementById('totalQueries').textContent = numQueries;
+        document.getElementById('passRate').textContent = passRate;
+        document.getElementById('totalTime').textContent = totalTime;
+
+        setStatus('Complete!', 100);
+        log(`=== BENCHMARK COMPLETE ===`);
+        log(`MRR: ${mrr}, R@1: ${recall1}, R@5: ${recall5}, R@10: ${recall10}`);
+        log(`Avg search: ${avgTime}ms, Total: ${totalTime}s`);
+
+        window.__qualityResults = {
+          metrics: { mrr: parseFloat(mrr), recall1: recall1Count / numQueries, recall5: recall5Count / numQueries, recall10: recall10Count / numQueries, avgSearchTime: avgTime, totalTime: parseFloat(totalTime) },
+          queries: queryResults,
+        };
+        window.__benchComplete = true;
+
+      } catch (error) {
+        log(`ERROR: ${error.message}`);
+        setStatus(`Error: ${error.message}`, 0);
+        console.error(error);
+      }
+
+      document.getElementById('runBench').disabled = false;
+    };
+
+    const loadModelsOnly = async () => {
+      document.getElementById('loadOnly').disabled = true;
+      try {
+        setStatus('Loading...', 10);
+        if (!binaryIndex) await loadIndex();
+        if (!testQueries) await loadTestQueries();
+        if (!embedder) await loadModels();
+        setStatus('Models loaded', 100);
+      } catch (error) {
+        log(`ERROR: ${error.message}`);
+        setStatus(`Error: ${error.message}`, 0);
+      }
+      document.getElementById('loadOnly').disabled = false;
+    };
+
+    // Batch mode: embed all queries at once, then search each
+    const runBatchBenchmark = async () => {
+      document.getElementById('runBatch').disabled = true;
+      document.getElementById('runBench').disabled = true;
+      const startTime = performance.now();
+
+      try {
+        setStatus('Loading index...', 5);
+        if (!binaryIndex) await loadIndex();
+
+        setStatus('Loading test queries...', 10);
+        if (!testQueries) await loadTestQueries();
+
+        setStatus('Loading models...', 15);
+        if (!embedder) await loadModels();
+
+        setStatus('Batch embedding all queries...', 50);
+        log(`Batch embedding ${testQueries.length} queries...`);
+
+        // Batch embed all queries at once
+        const promptedQueries = testQueries.map(q =>
+          `Represent this sentence for searching relevant passages: ${q.query}`
+        );
+        const batchEmbedStart = performance.now();
+        const batchEmbeddings = await embedder(promptedQueries, { pooling: 'cls', normalize: true });
+        const batchEmbedTime = Math.round(performance.now() - batchEmbedStart);
+        log(`Batch embedding done in ${batchEmbedTime}ms (${Math.round(batchEmbedTime / testQueries.length)}ms/query avg)`);
+
+        // Convert to binary
+        const binaryQueries = [];
+        for (let i = 0; i < testQueries.length; i++) {
+          const start = i * batchEmbeddings.dims[1];
+          const fullEmb = Array.from(batchEmbeddings.data.slice(start, start + DIMENSION));
+          binaryQueries.push(toUBinary(fullEmb, DIMENSION));
+        }
+
+        setStatus('Running searches...', 60);
+
+        const tbody = document.querySelector('#resultsTable tbody');
+        tbody.innerHTML = testQueries.map(q => `
+          <tr data-id="${q.id}">
+            <td>${q.id}</td>
+            <td>${q.query.slice(0, 50)}${q.query.length > 50 ? '...' : ''}</td>
+            <td>${q.expected_papers.join(', ')}</td>
+            <td data-field="rank">-</td>
+            <td data-field="time">-</td>
+            <td data-field="status"><span class="status pending">pending</span></td>
+          </tr>
+        `).join('');
+
+        const queryResults = [];
+        let reciprocalRankSum = 0;
+        let recall1Count = 0;
+        let recall5Count = 0;
+        let recall10Count = 0;
+        let totalSearchTime = 0;
+
+        const bytesPerPaper = DIMENSION / 8;
+        const numPapers = metadata.length;
+
+        for (let i = 0; i < testQueries.length; i++) {
+          const q = testQueries[i];
+          const progress = 60 + (i / testQueries.length) * 35;
+          setStatus(`Search ${i + 1}/${testQueries.length}: ${q.id}`, progress);
+
+          const row = document.querySelector(`tr[data-id="${q.id}"]`);
+          row.querySelector('[data-field="status"]').innerHTML = '<span class="status running">running</span>';
+
+          const searchStart = performance.now();
+
+          // Hamming search with pre-computed binary query
+          const binaryQuery = binaryQueries[i];
+          const candidateResults = [];
+          for (let j = 0; j < numPapers; j++) {
+            const paperBinary = binaryIndex.subarray(j * bytesPerPaper, (j + 1) * bytesPerPaper);
+            const dist = hammingDistance(binaryQuery, paperBinary);
+            candidateResults.push({ idx: j, dist });
+          }
+
+          candidateResults.sort((a, b) => a.dist - b.dist);
+          const topCandidates = candidateResults.slice(0, CANDIDATES);
+
+          // Rerank
+          const titles = topCandidates.map(c => metadata[c.idx].title);
+          const inputs = tokenizer(
+            new Array(titles.length).fill(q.query),
+            { text_pair: titles, padding: true, truncation: true }
+          );
+          const { logits } = await reranker(inputs);
+          const scores = logits.tolist().map(row => Array.isArray(row) ? row[0] : row);
+
+          const results = topCandidates.map((c, j) => ({
+            arxiv_id: metadata[c.idx].arxiv_id,
+            title: metadata[c.idx].title,
+            score: scores[j],
+            distance: c.dist,
+          }));
+          results.sort((a, b) => b.score - a.score);
+          const finalResults = results.slice(0, TOP_K);
+
+          const searchTime = Math.round(performance.now() - searchStart);
+          totalSearchTime += searchTime;
+
+          const rank = findRank(finalResults, q.expected_papers);
+          const passed = rank !== null && rank <= TOP_K;
+
+          if (rank !== null) {
+            reciprocalRankSum += 1 / rank;
+            if (rank <= 1) recall1Count++;
+            if (rank <= 5) recall5Count++;
+            if (rank <= 10) recall10Count++;
+          }
+
+          queryResults.push({ ...q, rank, searchTime, passed, results: finalResults });
+
+          row.querySelector('[data-field="rank"]').innerHTML = rank
+            ? `<span class="rank ${rank === 1 ? 'rank-1' : rank > 5 ? 'rank-low' : ''}">#${rank}</span>`
+            : '<span class="rank rank-low">Not found</span>';
+          row.querySelector('[data-field="time"]').textContent = searchTime;
+          row.querySelector('[data-field="status"]').innerHTML = passed
+            ? '<span class="status pass">PASS</span>'
+            : '<span class="status fail">FAIL</span>';
+
+          log(`${q.id}: rank=${rank ?? 'N/A'}, time=${searchTime}ms, ${passed ? 'PASS' : 'FAIL'}`);
+          if (!passed) {
+            log(`  Expected: ${q.expected_papers.join(', ')}`);
+            log(`  Got top 3: ${finalResults.slice(0, 3).map(r => r.arxiv_id).join(', ')}`);
+          }
+        }
+
+        const totalTime = ((performance.now() - startTime) / 1000).toFixed(1);
+        const numQueries = testQueries.length;
+
+        const mrr = (reciprocalRankSum / numQueries).toFixed(3);
+        const recall1 = ((recall1Count / numQueries) * 100).toFixed(0) + '%';
+        const recall5 = ((recall5Count / numQueries) * 100).toFixed(0) + '%';
+        const recall10 = ((recall10Count / numQueries) * 100).toFixed(0) + '%';
+        const avgTime = Math.round(totalSearchTime / numQueries);
+        const passRate = ((queryResults.filter(r => r.passed).length / numQueries) * 100).toFixed(0) + '%';
+
+        document.getElementById('mrr').textContent = mrr;
+        document.getElementById('recall1').textContent = recall1;
+        document.getElementById('recall5').textContent = recall5;
+        document.getElementById('recall10').textContent = recall10;
+        document.getElementById('avgTime').textContent = avgTime;
+        document.getElementById('totalQueries').textContent = numQueries;
+        document.getElementById('passRate').textContent = passRate;
+        document.getElementById('totalTime').textContent = totalTime;
+
+        setStatus('Complete!', 100);
+        log(`=== BATCH BENCHMARK COMPLETE ===`);
+        log(`Batch embed: ${batchEmbedTime}ms total, MRR: ${mrr}, R@1: ${recall1}, R@5: ${recall5}, R@10: ${recall10}`);
+
+        window.__qualityResults = {
+          metrics: { mrr: parseFloat(mrr), recall1: recall1Count / numQueries, recall5: recall5Count / numQueries, recall10: recall10Count / numQueries, avgSearchTime: avgTime, totalTime: parseFloat(totalTime) },
+          queries: queryResults,
+        };
+        window.__benchComplete = true;
+
+      } catch (error) {
+        log(`ERROR: ${error.message}`);
+        setStatus(`Error: ${error.message}`, 0);
+        console.error(error);
+      }
+
+      document.getElementById('runBatch').disabled = false;
+      document.getElementById('runBench').disabled = false;
+    };
+
+    // Run only selected query IDs
+    const runSelectedQueries = async () => {
+      const idsInput = document.getElementById('queryIds').value;
+      if (!idsInput.trim()) {
+        alert('Enter query IDs (e.g., q010, q011, q019)');
+        return;
+      }
+
+      const selectedIds = idsInput.split(',').map(id => id.trim().toLowerCase());
+      document.getElementById('runSelected').disabled = true;
+      const startTime = performance.now();
+
+      try {
+        setStatus('Loading...', 10);
+        if (!binaryIndex) await loadIndex();
+        if (!testQueries) await loadTestQueries();
+        if (!embedder) await loadModels();
+
+        const selectedQueries = testQueries.filter(q => selectedIds.includes(q.id.toLowerCase()));
+        if (selectedQueries.length === 0) {
+          log(`No matching queries found for: ${selectedIds.join(', ')}`);
+          setStatus('No matching queries', 0);
+          return;
+        }
+
+        log(`Running ${selectedQueries.length} selected queries: ${selectedQueries.map(q => q.id).join(', ')}`);
+        setStatus('Running selected queries...', 50);
+
+        const tbody = document.querySelector('#resultsTable tbody');
+        tbody.innerHTML = selectedQueries.map(q => `
+          <tr data-id="${q.id}">
+            <td>${q.id}</td>
+            <td>${q.query.slice(0, 50)}${q.query.length > 50 ? '...' : ''}</td>
+            <td>${q.expected_papers.join(', ')}</td>
+            <td data-field="rank">-</td>
+            <td data-field="time">-</td>
+            <td data-field="status"><span class="status pending">pending</span></td>
+          </tr>
+        `).join('');
+
+        const queryResults = [];
+        let passCount = 0;
+
+        for (let i = 0; i < selectedQueries.length; i++) {
+          const q = selectedQueries[i];
+          setStatus(`Query ${i + 1}/${selectedQueries.length}: ${q.id}`, 50 + (i / selectedQueries.length) * 45);
+
+          const row = document.querySelector(`tr[data-id="${q.id}"]`);
+          row.querySelector('[data-field="status"]').innerHTML = '<span class="status running">running</span>';
+
+          const searchStart = performance.now();
+          const results = await search(q.query);
+          const searchTime = Math.round(performance.now() - searchStart);
+
+          const rank = findRank(results, q.expected_papers);
+          const passed = rank !== null && rank <= TOP_K;
+          if (passed) passCount++;
+
+          queryResults.push({ ...q, rank, searchTime, passed, results });
+
+          row.querySelector('[data-field="rank"]').innerHTML = rank
+            ? `<span class="rank ${rank === 1 ? 'rank-1' : rank > 5 ? 'rank-low' : ''}">#${rank}</span>`
+            : '<span class="rank rank-low">Not found</span>';
+          row.querySelector('[data-field="time"]').textContent = searchTime;
+          row.querySelector('[data-field="status"]').innerHTML = passed
+            ? '<span class="status pass">PASS</span>'
+            : '<span class="status fail">FAIL</span>';
+
+          log(`${q.id}: rank=${rank ?? 'N/A'}, time=${searchTime}ms, ${passed ? 'PASS' : 'FAIL'}`);
+          if (!passed) {
+            log(`  Expected: ${q.expected_papers.join(', ')}`);
+            log(`  Got top 3: ${results.slice(0, 3).map(r => r.arxiv_id).join(', ')}`);
+          }
+        }
+
+        const totalTime = ((performance.now() - startTime) / 1000).toFixed(1);
+        setStatus(`Done: ${passCount}/${selectedQueries.length} passed`, 100);
+        log(`=== SELECTED QUERIES COMPLETE: ${passCount}/${selectedQueries.length} passed in ${totalTime}s ===`);
+
+        window.__qualityResults = { queries: queryResults };
+        window.__benchComplete = true;
+
+      } catch (error) {
+        log(`ERROR: ${error.message}`);
+        setStatus(`Error: ${error.message}`, 0);
+      }
+
+      document.getElementById('runSelected').disabled = false;
+    };
+
+    window.runQualityBenchmark = runQualityBenchmark;
+    window.runBatchBenchmark = runBatchBenchmark;
+    window.runSelectedQueries = runSelectedQueries;
+    window.loadModelsOnly = loadModelsOnly;
+    window.__benchComplete = false;
+  </script>
+</body>
+</html>

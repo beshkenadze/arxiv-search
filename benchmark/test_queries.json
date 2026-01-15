@@ -1,0 +1,396 @@
+{
+  "version": "1.0",
+  "description": "Benchmark queries for arxiv semantic search quality evaluation",
+  "queries": [
+    {
+      "id": "q001",
+      "query": "paper that introduced the Transformer architecture in 2017",
+      "expected_papers": ["1706.03762"],
+      "category": "llm-architecture",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q002",
+      "query": "open source alternative to GPT-4",
+      "expected_papers": ["2307.09288"],
+      "category": "llm-architecture",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q003",
+      "query": "open and efficient 65B language model from Meta",
+      "expected_papers": ["2302.13971"],
+      "category": "llm-architecture",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q004",
+      "query": "540-billion parameter Pathways language model",
+      "expected_papers": ["2204.02311"],
+      "category": "llm-architecture",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q005",
+      "query": "compute-optimal 70B model that outperforms a 175B model",
+      "expected_papers": ["2203.15556"],
+      "category": "llm-architecture",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q006",
+      "query": "large language model for science from Meta AI",
+      "expected_papers": ["2211.09085"],
+      "category": "llm-architecture",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q007",
+      "query": "capabilities of GPT-4 compared to earlier models",
+      "expected_papers": ["2303.08774"],
+      "category": "llm-architecture",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q008",
+      "query": "bilingual 130B model for English and Chinese",
+      "expected_papers": ["2210.02414"],
+      "category": "llm-architecture",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q009",
+      "query": "sparsely activated mixture-of-experts model with 1.2T parameters",
+      "expected_papers": ["2112.06905"],
+      "category": "llm-architecture",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q010",
+      "query": "Meta's open 175B language model release",
+      "expected_papers": ["2205.01068"],
+      "category": "llm-architecture",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q011",
+      "query": "176B multilingual language model by BigScience",
+      "expected_papers": ["2211.05100"],
+      "category": "llm-architecture",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q012",
+      "query": "Google's LaMDA dialogue model",
+      "expected_papers": ["2201.08239"],
+      "category": "llm-architecture",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q013",
+      "query": "efficient fine-tuning large language models with quantization",
+      "expected_papers": ["2305.14314"],
+      "category": "fine-tuning",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q014",
+      "query": "fine-tune LLaMA to follow instructions with minimal changes",
+      "expected_papers": ["2303.16199"],
+      "category": "fine-tuning",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q015",
+      "query": "can prompt tuning work as well as fine-tuning for LMs?",
+      "expected_papers": ["2110.07602"],
+      "category": "fine-tuning",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q016",
+      "query": "survey of parameter-efficient fine-tuning techniques",
+      "expected_papers": ["2403.14608"],
+      "category": "fine-tuning",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q017",
+      "query": "adaptive budget allocation in LoRA fine-tuning",
+      "expected_papers": ["2303.10512"],
+      "category": "fine-tuning",
+      "difficulty": "hard"
+    },
+    {
+      "id": "q018",
+      "query": "distill chain-of-thought reasoning from GPT-4 to a smaller model",
+      "expected_papers": ["2212.00193"],
+      "category": "fine-tuning",
+      "difficulty": "hard"
+    },
+    {
+      "id": "q019",
+      "query": "retrieval augmented generation survey",
+      "expected_papers": ["2312.10997"],
+      "category": "rag",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q020",
+      "query": "few-shot learning for knowledge-intensive tasks with retrieval",
+      "expected_papers": ["2208.03299"],
+      "category": "rag",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q021",
+      "query": "prompting LLMs to reason and use tools step by step",
+      "expected_papers": ["2210.03629"],
+      "category": "rag",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q022",
+      "query": "do retrieval-augmented LMs actually improve reasoning?",
+      "expected_papers": ["2212.09146"],
+      "category": "rag",
+      "difficulty": "hard"
+    },
+    {
+      "id": "q023",
+      "query": "language model that can call external tools like a calculator",
+      "expected_papers": ["2302.04761"],
+      "category": "rag",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q024",
+      "query": "how to train LLMs to follow human instructions",
+      "expected_papers": ["2203.02155"],
+      "category": "alignment",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q025",
+      "query": "train a harmless AI assistant using AI feedback instead of human labels",
+      "expected_papers": ["2209.11895"],
+      "category": "alignment",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q026",
+      "query": "scaling instruction fine-tuning improves language model performance",
+      "expected_papers": ["2210.11416"],
+      "category": "alignment",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q027",
+      "query": "improve an LLM's instruction following without human-written examples",
+      "expected_papers": ["2212.10560"],
+      "category": "alignment",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q028",
+      "query": "align a large model with only 1k training examples",
+      "expected_papers": ["2305.11206"],
+      "category": "alignment",
+      "difficulty": "hard"
+    },
+    {
+      "id": "q029",
+      "query": "improving dialogue agents with targeted human feedback on failures",
+      "expected_papers": ["2209.14375"],
+      "category": "alignment",
+      "difficulty": "hard"
+    },
+    {
+      "id": "q030",
+      "query": "quantize a 175B language model to 4-bit without retraining",
+      "expected_papers": ["2210.17323"],
+      "category": "efficiency",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q031",
+      "query": "fast and memory-efficient exact attention for transformers",
+      "expected_papers": ["2205.14135"],
+      "category": "efficiency",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q032",
+      "query": "prune a large language model without retraining it",
+      "expected_papers": ["2306.11695"],
+      "category": "efficiency",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q033",
+      "query": "run a large language model on a single GPU by offloading memory",
+      "expected_papers": ["2303.06865"],
+      "category": "efficiency",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q034",
+      "query": "efficient memory management for serving LLMs",
+      "expected_papers": ["2309.06180"],
+      "category": "efficiency",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q035",
+      "query": "how to train a 530 billion parameter transformer model",
+      "expected_papers": ["2201.11990"],
+      "category": "efficiency",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q036",
+      "query": "few-shot visual language model by DeepMind",
+      "expected_papers": ["2204.14198"],
+      "category": "multimodal",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q037",
+      "query": "latent diffusion model for high-resolution image generation",
+      "expected_papers": ["2112.10752"],
+      "category": "multimodal",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q038",
+      "query": "multimodal large language model that can see images",
+      "expected_papers": ["2302.14045"],
+      "category": "multimodal",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q039",
+      "query": "bootstrapping vision-language pretraining with frozen models",
+      "expected_papers": ["2301.12597"],
+      "category": "multimodal",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q040",
+      "query": "using GPT-4 to generate multimodal instruction data for a vision-language model",
+      "expected_papers": ["2304.08485"],
+      "category": "multimodal",
+      "difficulty": "hard"
+    },
+    {
+      "id": "q041",
+      "query": "Holistic evaluation of language models for transparency",
+      "expected_papers": ["2211.09110"],
+      "category": "evaluation",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q042",
+      "query": "benchmark with 200+ tasks to evaluate language models",
+      "expected_papers": ["2206.04615"],
+      "category": "evaluation",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q043",
+      "query": "does GPT-4 show signs of artificial general intelligence?",
+      "expected_papers": ["2303.12712"],
+      "category": "evaluation",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q044",
+      "query": "benchmark to evaluate text embedding models on dozens of datasets",
+      "expected_papers": ["2210.07316"],
+      "category": "evaluation",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q045",
+      "query": "LMSYS Chatbot Arena human and GPT-4 evaluations of LLMs",
+      "expected_papers": ["2403.04132"],
+      "category": "evaluation",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q046",
+      "query": "chain-of-thought prompting for reasoning in large language models",
+      "expected_papers": ["2201.11903"],
+      "category": "evaluation",
+      "difficulty": "easy"
+    },
+    {
+      "id": "q047",
+      "query": "DeepMind RETRO model performance with fewer parameters",
+      "expected_papers": ["2112.04426"],
+      "category": "rag",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q048",
+      "query": "improve chain-of-thought reasoning by self-consistency",
+      "expected_papers": ["2203.11171"],
+      "category": "evaluation",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q049",
+      "query": "open 16B language model for code generation",
+      "expected_papers": ["2203.13474"],
+      "category": "llm-architecture",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q050",
+      "query": "AI model that writes code at competitive programming level",
+      "expected_papers": ["2203.07814"],
+      "category": "llm-architecture",
+      "difficulty": "medium"
+    },
+    {
+      "id": "q051",
+      "query": "QLoRA efficient finetuning quantized LLMs 4-bit",
+      "expected_papers": ["2305.14314"],
+      "category": "fine-tuning",
+      "difficulty": "medium",
+      "notes": "QLoRA paper - should find efficient finetuning with quantization"
+    },
+    {
+      "id": "q052",
+      "query": "Retrieval-Augmented Generation for Large Language Models A Survey comprehensive review",
+      "expected_papers": ["2312.10997"],
+      "category": "rag",
+      "difficulty": "easy",
+      "notes": "RAG survey paper - direct match"
+    },
+    {
+      "id": "q053",
+      "query": "open source foundation model alternative to GPT",
+      "expected_papers": ["2302.13971", "2307.09288"],
+      "category": "llm-architecture",
+      "difficulty": "medium",
+      "notes": "LLaMA and LLaMA 2 papers"
+    },
+    {
+      "id": "q054",
+      "query": "training language models to follow human instructions with RLHF",
+      "expected_papers": ["2203.02155"],
+      "category": "alignment",
+      "difficulty": "easy",
+      "notes": "InstructGPT paper"
+    },
+    {
+      "id": "q055",
+      "query": "dense retrieval for question answering systems",
+      "expected_papers": ["2312.10997", "2502.01113"],
+      "category": "rag",
+      "difficulty": "hard",
+      "notes": "RAG survey + GFM-RAG paper - indirect query"
+    }
+  ]
+}
