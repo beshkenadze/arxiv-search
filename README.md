@@ -66,6 +66,12 @@ The binary embedding files are served from Cloudflare R2 CDN and not included in
 2. **Asymmetric search**: Solves WebGPU/WASM precision mismatches
 3. **Reranker beats Int8**: 60MB reranker outperforms 345MB Int8 rescore
 
+## References
+
+- [Embedding Quantization (SBERT)](https://sbert.net/examples/sentence_transformer/applications/embedding-quantization/README.html)
+- [Embedding Quantization (Hugging Face)](https://huggingface.co/blog/embedding-quantization)
+- [What is Vector Quantization (Milvus)](https://milvus.io/ai-quick-reference/what-is-vector-quantization-in-embeddings)
+
 ## License
 
 MIT
